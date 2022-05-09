@@ -2,7 +2,7 @@
 status: proposed
 title: Pipelines in Pipelines
 creation-date: '2021-03-08'
-last-updated: '2022-05-03'
+last-updated: '2022-05-09'
 authors:
 - '@jerop'
 - '@abayer'
@@ -28,6 +28,13 @@ see-also:
     - [Software Supply Chain Security](#software-supply-chain-security)
     - [Fanning Out Pipelines](#fanning-out-pipelines)
   - [Requirements](#requirements)
+  - [Proposal](#proposal)
+    - [Specification](#specification)
+    - [Status](#status)
+  - [Design](#design)
+  - [Alternatives](#alternatives)
+    - [Specification - Create a new type](#specification---create-a-new-type)
+    - [Specification - Inline fields](#specification---inline-fields)
   - [References](#references)
 <!-- /toc -->
 
@@ -352,6 +359,178 @@ main-`PipelineRun` to be able to fetch and access the sub-`PipelineRun`'s full s
 6. Users should be able to propagate actions from the main-`Pipeline` to the sub-`Pipeline`, such as deletion and
 cancellation.
 
+## Proposal
+
+This proposal focuses on enabling specification and execution of a `Pipeline` in a `Pipeline`. This section will 
+provide the overview, see the [design](#design) section below for further details.
+
+### Specification
+
+To support defining and executing `Pipelines` in `Pipelines`, we propose adding a `Pipeline` field in `PipelineTask` 
+which takes the [`PipelineRunSpec`][pipelinerunspec]. This field should take `PipelineRef` and `PipelineSpec` only 
+initially, we will add validation to confirm this. This field provides the extensibility to support other fields
+related to creating a `PipelineRun` from [`PipelineRunSpec`][pipelinerunspec]. We will create 
+
+```go
+type PipelineTask struct {
+    Name     string                `json:"name,omitempty"`
+    TaskRef  *TaskRef              `json:"taskRef,omitempty"`
+    TaskSpec *EmbeddedTask         `json:"taskSpec,omitempty"`
+    Pipeline *PipelineRunSpec      `json:"pipeline,omitempty"`
+    ...
+}
+```
+
+For example, the [example](#fanning-out-pipelines) described above can be solved using a `Pipeline` named 
+`security-scans` which is run within a `Pipeline` named `clone-scan-notify` where the `PipelineRef` is used.
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: security-scans
+spec:
+  tasks:
+    - name: scorecards
+      taskRef:
+        name: scorecards
+    - name: codeql
+      taskRef:
+        name: codeql
+---        
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: clone-scan-notify
+spec:
+  tasks:
+  - name: git-clone
+    taskRef:
+      name: git-clone
+  - name: security-scans
+    pipeline:
+      pipelineRef:
+        name: security-scans
+  - name: notification
+    taskRef:
+      name: notification
+```
+
+The above example can be modified as such to use `PipelineSpec` instead of `PipelineRef` if the user would prefer to 
+embed the `Pipeline` specification: 
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: clone-scan-notify
+spec:
+  tasks:
+    - name: git-clone
+      taskRef:
+        name: git-clone
+    - name: security-scans
+      pipeline:
+        pipelineSpec:
+          tasks:
+            - name: scorecards
+              taskRef:
+                name: scorecards
+            - name: codeql
+              taskRef:
+                name: codeql
+    - name: notification
+      taskRef:
+        name: notification
+````
+
+###### Alternatives
+- [Create a new type](#specification---create-a-new-type)
+- [Inline fields](#specification---inline-fields)
+
+### Status
+
+In [TEP-0100][tep-0100] we proposed changes to `PipelineRun` Status to reduce the amount of information stored about
+the status of `TaskRuns` and `Runs` to improve performance, reduce memory bloat and improve extensibility. Now that 
+those changes are implemented, the `PipelineRun` status is set up to handle `Pipelines` in `Pipelines` without 
+exacerbating the performance and storage issues that were there before.
+
+We can leverage the `PipelineRun.Status.ChildReferences` by populating `ChildReferences` for all child `PipelineRuns`, 
+as shown below:
+
+```yaml
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+...
+spec:
+...
+status:
+    conditions:
+      - lastTransitionTime: "2020-05-04T02:19:14Z"
+        reason: Succeeded
+        status: "True"
+        type: Succeeded
+    resources:
+      - apiVersion: v1beta1
+        kind: PipelineRun
+        name: sub-pipeline-run
+        conditions:
+          - lastTransitionTime: "2020-05-04T02:10:49Z"
+            reason: Succeeded
+            status: "True"
+            type: Succeeded
+```
+
+The `ChildReferences` will be populated for `Pipelines` in `Pipelines` regardless of the embedded status flags.
+
+## Design
+
+TODO
+
+## Alternatives
+
+### Specification - Create a new type
+
+We could add a new type to pass to the `Pipeline` field - say `PipelineTaskPipeline` - which will take `PipelineRef` 
+and `PipelineSpec` only initially and can be expanded to support other fields from [`PipelineRunSpec`][pipelinerunspec].
+
+```go
+type PipelineTaskPipeline struct {
+    PipelineRef  *PipelineRef      `json:"pipelineRef,omitempty"`
+    PipelineSpec *PipelineSpec     `json:"pipelineSpec,omitempty"`
+}
+
+type PipelineTask struct {
+    Name     string                `json:"name,omitempty"`
+    TaskRef  *TaskRef              `json:"taskRef,omitempty"`
+    TaskSpec *EmbeddedTask         `json:"taskSpec,omitempty"`
+    Pipeline *PipelineTaskPipeline `json:"pipeline,omitempty"`
+    ...
+}
+```
+
+However, this solution involves duplication that will be worsened over time as we support more features and fields
+from [`PipelineRunSpec`][pipelinerunspec].
+
+### Specification - Inline fields
+
+We could pass `PipelineRef` and `PipelineSpec` directly in the `PipelineTask.
+
+```go
+type PipelineTask struct {
+    Name            string                `json:"name,omitempty"`
+    TaskRef         *TaskRef              `json:"taskRef,omitempty"`
+    TaskSpec        *EmbeddedTask         `json:"taskSpec,omitempty"`
+    PipelineRef     *PipelineRef          `json:"pipelineRef,omitempty"`
+    PipelineSpec    *PipelineSpec         `json:"pipelineSpec,omitempty"`
+    ...
+}
+```
+
+However, this solution will bring confusion when we want to add support for features and fields from
+[`PipelineRunSpec`][pipelinerunspec] that are specific to creating `PipelineRuns`.
+
 ## References
 
 - Issues
@@ -387,3 +566,4 @@ cancellation.
 [codeql]: https://github.com/github/codeql
 [matrix-uc]: https://github.com/tektoncd/community/pull/600#pullrequestreview-851817251
 [status-test]: https://github.com/tektoncd/pipeline/issues/2134#issuecomment-631552148
+[pipelinerunspec]: https://github.com/tektoncd/pipeline/blob/302895b5a1ca45c02a85a9822201643c159fe02c/pkg/apis/pipeline/v1alpha1/pipelinerun_types.go#L58-L89
