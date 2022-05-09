@@ -531,6 +531,53 @@ type PipelineTask struct {
 However, this solution will bring confusion when we want to add support for features and fields from
 [`PipelineRunSpec`][pipelinerunspec] that are specific to creating `PipelineRuns`.
 
+### Specification - Reorganizing `PipelineTask`
+
+While we're currently locked into supporting the existing `TaskRef` and `TaskSpec` fields, the overall structure of 
+`PipelineTask` does not feel like it will continue to scale in a clean way as we add more types that can be used in
+`PipelineTask`s. A possible solution to this could be adding new fields under `PipelineTask` for `Ref` and `Spec`, which
+would then contain fields specific for the supported `PipelineTask` types, as follows:
+
+```go
+type PipelineTask struct {
+    Name     string                `json:"name,omitempty"`
+    TaskRef  *TaskRef              `json:"taskRef,omitempty"`
+    TaskSpec *EmbeddedTask         `json:"taskSpec,omitempty"`
+    Ref      *PipelineTaskRef      `json:"ref,omitempty"`
+    Spec     *PipelineTaskSpec     `json:"spec,omitempty"`
+    ...
+}
+
+type PipelineTaskRef struct {
+	Task       *TaskRef `json:"task,omitempty"`
+	CustomTask *TaskRef `json:"customTask,omitempty"`
+    // Note that *TaskRef contains everything in *PipelineRef, so we opted to just reuse it here.
+    Pipeline   *TaskRef `json:"pipeline,omitempty"`
+}
+
+type PipelineTaskSpec struct {
+	Task       *TaskSpec       `json:"task,omitempty"`
+	CustomTask *CustomTaskSpec `json:"customTask,omitempty"`
+	Pipeline   *PipelineSpec   `json:"pipeline,omitempty"`
+
+	Metadata PipelineTaskMetadata `json:"metadata,omitempty"`
+}
+
+type CustomTaskSpec struct {
+    runtime.TypeMeta          `json:",inline,omitempty"`
+	Spec runtime.RawExtension `json:"spec,omitempty"`
+}
+```
+
+Rather than using `*EmbeddedTask`, which has `TaskSpec` inlined for `Task`s, and `runtime.TypeMeta` and `runtime.RawExtension`
+for custom tasks, as well as the `Metadata` field, it made more sense to create a new `CustomTaskSpec`, just use `*TaskSpec`
+for `Task`s and `*PipelineSpec` for `Pipeline`s, while adding the `Metadata` field to `PipelineTaskSpec.
+
+Support for the existing `TaskRef` and `TaskSpec` fields would continue for the foreseeable future, but anything specified
+under the new `Ref` or `Spec` fields would take priority.
+
+This approach does not eliminate the problem of handling `PipelineRunSpec` fields, at least not in its current form.
+
 ## References
 
 - Issues
