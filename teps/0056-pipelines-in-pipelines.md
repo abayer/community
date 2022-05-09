@@ -613,4 +613,4 @@ This approach does not eliminate the problem of handling `PipelineRunSpec` field
 [codeql]: https://github.com/github/codeql
 [matrix-uc]: https://github.com/tektoncd/community/pull/600#pullrequestreview-851817251
 [status-test]: https://github.com/tektoncd/pipeline/issues/2134#issuecomment-631552148
-[pipelinerunspec]: https://github.com/tektoncd/pipeline/blob/302895b5a1ca45c02a85a9822201643c159fe02c/pkg/apis/pipeline/v1alpha1/pipelinerun_types.go#L58-L89
+[pipelinerunspec]: https://github.com/tektoncd/pipeline/blob/302895b5a1ca45c02a85a9822201643c159fe02c/pkg/apis/pipeline/v1beta1/pipelinerun_types.go#L197-L239
